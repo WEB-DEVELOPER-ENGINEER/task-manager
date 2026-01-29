@@ -8,8 +8,16 @@ import {
   ScrollView,
   Platform,
   Modal,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+  interpolate,
+} from 'react-native-reanimated';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { validateTaskDescription } from '../utils/validation';
 import { tokens } from '../theme/tokens';
@@ -17,6 +25,11 @@ import { useTheme } from '../theme/ThemeProvider';
 import { GlassCard } from './primitives/GlassCard';
 import { Priority, TaskInput as TaskInputType } from '../types/Task';
 import { typography } from '../utils/typography';
+
+// Enable LayoutAnimation on Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 /**
  * Props interface for TaskInput component
@@ -58,6 +71,19 @@ const TaskInput: React.FC<TaskInputProps> = ({
   const [showDatePicker, setShowDatePicker] = useState<boolean>(false);
   const [isExpoGo, setIsExpoGo] = useState<boolean>(false);
 
+  // Expandable sections state
+  const [isPriorityExpanded, setIsPriorityExpanded] = useState<boolean>(false);
+  const [isDateExpanded, setIsDateExpanded] = useState<boolean>(false);
+  const [isTagsExpanded, setIsTagsExpanded] = useState<boolean>(false);
+
+  // Animation values for expandable sections
+  const priorityHeight = useSharedValue(0);
+  const dateHeight = useSharedValue(0);
+  const tagsHeight = useSharedValue(0);
+  const priorityRotation = useSharedValue(0);
+  const dateRotation = useSharedValue(0);
+  const tagsRotation = useSharedValue(0);
+
   // Detect if running in Expo Go
   useEffect(() => {
     // In Expo Go, DateTimePicker might not work properly
@@ -90,6 +116,10 @@ const TaskInput: React.FC<TaskInputProps> = ({
       setPriority(editingTask.priority);
       setDueDate(editingTask.dueDate ? new Date(editingTask.dueDate) : null);
       setTags(editingTask.tags);
+      // Auto-expand sections with data
+      if (editingTask.priority !== 'medium') setIsPriorityExpanded(true);
+      if (editingTask.dueDate) setIsDateExpanded(true);
+      if (editingTask.tags.length > 0) setIsTagsExpanded(true);
     } else {
       // Reset when not editing
       setInputValue('');
@@ -99,10 +129,76 @@ const TaskInput: React.FC<TaskInputProps> = ({
     }
   }, [editingTask]);
 
+  // Animate section expansions
+  useEffect(() => {
+    priorityHeight.value = withTiming(isPriorityExpanded ? 1 : 0, { duration: 300 });
+    priorityRotation.value = withTiming(isPriorityExpanded ? 1 : 0, { duration: 300 });
+  }, [isPriorityExpanded]);
+
+  useEffect(() => {
+    dateHeight.value = withTiming(isDateExpanded ? 1 : 0, { duration: 300 });
+    dateRotation.value = withTiming(isDateExpanded ? 1 : 0, { duration: 300 });
+  }, [isDateExpanded]);
+
+  useEffect(() => {
+    tagsHeight.value = withTiming(isTagsExpanded ? 1 : 0, { duration: 300 });
+    tagsRotation.value = withTiming(isTagsExpanded ? 1 : 0, { duration: 300 });
+  }, [isTagsExpanded]);
+
   // Animated style for input container
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
   }));
+
+  // Animated styles for expandable sections
+  const priorityAnimatedStyle = useAnimatedStyle(() => ({
+    height: interpolate(priorityHeight.value, [0, 1], [0, 120]),
+    opacity: priorityHeight.value,
+    overflow: 'hidden',
+  }));
+
+  const dateAnimatedStyle = useAnimatedStyle(() => ({
+    height: interpolate(dateHeight.value, [0, 1], [0, 80]),
+    opacity: dateHeight.value,
+    overflow: 'hidden',
+  }));
+
+  const tagsAnimatedStyle = useAnimatedStyle(() => ({
+    height: interpolate(tagsHeight.value, [0, 1], [0, tags.length > 0 ? 140 : 80]),
+    opacity: tagsHeight.value,
+    overflow: 'hidden',
+  }));
+
+  const priorityChevronStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${interpolate(priorityRotation.value, [0, 1], [0, 180])}deg` }],
+  }));
+
+  const dateChevronStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${interpolate(dateRotation.value, [0, 1], [0, 180])}deg` }],
+  }));
+
+  const tagsChevronStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${interpolate(tagsRotation.value, [0, 1], [0, 180])}deg` }],
+  }));
+
+  /**
+   * Toggle section expansion with smooth animation
+   */
+  const toggleSection = useCallback((section: 'priority' | 'date' | 'tags') => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    
+    switch (section) {
+      case 'priority':
+        setIsPriorityExpanded(prev => !prev);
+        break;
+      case 'date':
+        setIsDateExpanded(prev => !prev);
+        break;
+      case 'tags':
+        setIsTagsExpanded(prev => !prev);
+        break;
+    }
+  }, []);
 
   /**
    * Handles adding or updating a task with validation
@@ -316,73 +412,113 @@ const TaskInput: React.FC<TaskInputProps> = ({
 
         {/* Priority selector */}
         <View style={styles.section}>
-          <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Priority</Text>
-          <View style={styles.priorityContainer}>
-            {(['low', 'medium', 'high', 'critical'] as Priority[]).map(p => (
-              <TouchableOpacity
-                key={p}
-                style={[
-                  styles.priorityButton,
-                  {
-                    backgroundColor: priority === p ? priorityColors[p] : theme.colors.surface,
-                    borderColor: priorityColors[p],
-                  },
-                ]}
-                onPress={() => handlePrioritySelect(p)}
-                accessibilityLabel={`Priority ${p}`}
-                accessibilityRole="button"
-                accessibilityState={{ selected: priority === p }}
-              >
-                <Text
+          <TouchableOpacity
+            style={styles.sectionHeader}
+            onPress={() => toggleSection('priority')}
+            accessibilityLabel={`Priority section, ${isPriorityExpanded ? 'expanded' : 'collapsed'}`}
+            accessibilityRole="button"
+            accessibilityHint="Double tap to expand or collapse priority options"
+          >
+            <View style={styles.sectionHeaderLeft}>
+              <Text style={[styles.sectionLabel, { color: theme.colors.text }]}>Priority</Text>
+              {!isPriorityExpanded && (
+                <View style={[styles.badge, { backgroundColor: priorityColors[priority] }]}>
+                  <Text style={styles.badgeText}>
+                    {priority.charAt(0).toUpperCase() + priority.slice(1)}
+                  </Text>
+                </View>
+              )}
+            </View>
+            <Animated.Text style={[styles.chevron, priorityChevronStyle]}>▼</Animated.Text>
+          </TouchableOpacity>
+          
+          <Animated.View style={priorityAnimatedStyle}>
+            <View style={styles.priorityContainer}>
+              {(['low', 'medium', 'high', 'critical'] as Priority[]).map(p => (
+                <TouchableOpacity
+                  key={p}
                   style={[
-                    styles.priorityText,
+                    styles.priorityButton,
                     {
-                      color: priority === p ? '#FFFFFF' : theme.colors.text,
+                      backgroundColor: priority === p ? priorityColors[p] : theme.colors.surface,
+                      borderColor: priorityColors[p],
                     },
                   ]}
+                  onPress={() => handlePrioritySelect(p)}
+                  accessibilityLabel={`Priority ${p}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: priority === p }}
                 >
-                  {p.charAt(0).toUpperCase() + p.slice(1)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+                  <Text
+                    style={[
+                      styles.priorityText,
+                      {
+                        color: priority === p ? '#FFFFFF' : theme.colors.text,
+                      },
+                    ]}
+                  >
+                    {p.charAt(0).toUpperCase() + p.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Animated.View>
         </View>
 
         {/* Due date picker */}
         <View style={styles.section}>
-          <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Due Date</Text>
-          <View style={styles.dateContainer}>
-            <TouchableOpacity
-              style={[
-                styles.dateButton,
-                {
-                  backgroundColor: theme.colors.surface,
-                  borderColor: theme.colors.accent,
-                  borderWidth: 1,
-                },
-              ]}
-              onPress={() => {
-                console.log('Date button pressed, showing picker');
-                setShowDatePicker(true);
-              }}
-              accessibilityLabel="Select due date"
-              accessibilityRole="button"
-            >
-              <Text style={[styles.dateText, { color: dueDate ? theme.colors.text : theme.colors.accent }]}>
-                {dueDate ? dueDate.toLocaleDateString() : 'Tap to set due date'}
-              </Text>
-            </TouchableOpacity>
-            {dueDate && (
+          <TouchableOpacity
+            style={styles.sectionHeader}
+            onPress={() => toggleSection('date')}
+            accessibilityLabel={`Due date section, ${isDateExpanded ? 'expanded' : 'collapsed'}`}
+            accessibilityRole="button"
+            accessibilityHint="Double tap to expand or collapse due date options"
+          >
+            <View style={styles.sectionHeaderLeft}>
+              <Text style={[styles.sectionLabel, { color: theme.colors.text }]}>Due Date</Text>
+              {!isDateExpanded && dueDate && (
+                <View style={[styles.badge, { backgroundColor: theme.colors.accent }]}>
+                  <Text style={styles.badgeText}>{dueDate.toLocaleDateString()}</Text>
+                </View>
+              )}
+            </View>
+            <Animated.Text style={[styles.chevron, dateChevronStyle]}>▼</Animated.Text>
+          </TouchableOpacity>
+          
+          <Animated.View style={dateAnimatedStyle}>
+            <View style={styles.dateContainer}>
               <TouchableOpacity
-                style={[styles.clearButton, { backgroundColor: theme.colors.error }]}
-                onPress={() => setDueDate(null)}
-                accessibilityLabel="Clear due date"
+                style={[
+                  styles.dateButton,
+                  {
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.accent,
+                    borderWidth: 1,
+                  },
+                ]}
+                onPress={() => {
+                  console.log('Date button pressed, showing picker');
+                  setShowDatePicker(true);
+                }}
+                accessibilityLabel="Select due date"
                 accessibilityRole="button"
               >
-                <Text style={styles.clearButtonText}>×</Text>
+                <Text style={[styles.dateText, { color: dueDate ? theme.colors.text : theme.colors.accent }]}>
+                  {dueDate ? dueDate.toLocaleDateString() : 'Tap to set due date'}
+                </Text>
               </TouchableOpacity>
-            )}
-          </View>
+              {dueDate && (
+                <TouchableOpacity
+                  style={[styles.clearButton, { backgroundColor: theme.colors.error }]}
+                  onPress={() => setDueDate(null)}
+                  accessibilityLabel="Clear due date"
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.clearButtonText}>×</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </Animated.View>
           
           {/* Native DateTimePicker for standalone apps */}
           {showDatePicker && !isExpoGo && Platform.OS !== 'web' && (
@@ -458,61 +594,80 @@ const TaskInput: React.FC<TaskInputProps> = ({
 
         {/* Tag input */}
         <View style={styles.section}>
-          <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Tags</Text>
-          <View style={styles.tagInputContainer}>
-            <TextInput
-              style={[
-                styles.tagInput,
-                {
-                  color: theme.colors.text,
-                  backgroundColor: theme.colors.surface,
-                  borderColor: theme.colors.border,
-                },
-              ]}
-              value={tagInput}
-              onChangeText={setTagInput}
-              placeholder="Add a tag..."
-              placeholderTextColor={theme.colors.textSecondary}
-              returnKeyType="done"
-              onSubmitEditing={handleAddTag}
-              accessibilityLabel="Tag input"
-              accessibilityHint="Enter a tag and press done to add"
-            />
-            <TouchableOpacity
-              style={[styles.tagAddButton, { backgroundColor: theme.colors.accent }]}
-              onPress={handleAddTag}
-              accessibilityLabel="Add tag"
-              accessibilityRole="button"
-            >
-              <Text style={styles.tagAddButtonText}>+</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Tag chips */}
-          {tags.length > 0 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.tagChipsContainer}
-            >
-              {tags.map((tag, index) => (
-                <View
-                  key={`${tag}-${index}`}
-                  style={[styles.tagChip, { backgroundColor: theme.colors.accent }]}
-                >
-                  <Text style={styles.tagChipText}>{tag}</Text>
-                  <TouchableOpacity
-                    onPress={() => handleRemoveTag(tag)}
-                    style={styles.tagRemoveButton}
-                    accessibilityLabel={`Remove tag ${tag}`}
-                    accessibilityRole="button"
-                  >
-                    <Text style={styles.tagRemoveText}>×</Text>
-                  </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.sectionHeader}
+            onPress={() => toggleSection('tags')}
+            accessibilityLabel={`Tags section, ${isTagsExpanded ? 'expanded' : 'collapsed'}`}
+            accessibilityRole="button"
+            accessibilityHint="Double tap to expand or collapse tag options"
+          >
+            <View style={styles.sectionHeaderLeft}>
+              <Text style={[styles.sectionLabel, { color: theme.colors.text }]}>Tags</Text>
+              {!isTagsExpanded && tags.length > 0 && (
+                <View style={[styles.badge, { backgroundColor: theme.colors.accent }]}>
+                  <Text style={styles.badgeText}>{tags.length}</Text>
                 </View>
-              ))}
-            </ScrollView>
-          )}
+              )}
+            </View>
+            <Animated.Text style={[styles.chevron, tagsChevronStyle]}>▼</Animated.Text>
+          </TouchableOpacity>
+          
+          <Animated.View style={tagsAnimatedStyle}>
+            <View style={styles.tagInputContainer}>
+              <TextInput
+                style={[
+                  styles.tagInput,
+                  {
+                    color: theme.colors.text,
+                    backgroundColor: theme.colors.surface,
+                    borderColor: theme.colors.border,
+                  },
+                ]}
+                value={tagInput}
+                onChangeText={setTagInput}
+                placeholder="Add a tag..."
+                placeholderTextColor={theme.colors.textSecondary}
+                returnKeyType="done"
+                onSubmitEditing={handleAddTag}
+                accessibilityLabel="Tag input"
+                accessibilityHint="Enter a tag and press done to add"
+              />
+              <TouchableOpacity
+                style={[styles.tagAddButton, { backgroundColor: theme.colors.accent }]}
+                onPress={handleAddTag}
+                accessibilityLabel="Add tag"
+                accessibilityRole="button"
+              >
+                <Text style={styles.tagAddButtonText}>+</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Tag chips */}
+            {tags.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.tagChipsContainer}
+              >
+                {tags.map((tag, index) => (
+                  <View
+                    key={`${tag}-${index}`}
+                    style={[styles.tagChip, { backgroundColor: theme.colors.accent }]}
+                  >
+                    <Text style={styles.tagChipText}>{tag}</Text>
+                    <TouchableOpacity
+                      onPress={() => handleRemoveTag(tag)}
+                      style={styles.tagRemoveButton}
+                      accessibilityLabel={`Remove tag ${tag}`}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.tagRemoveText}>×</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </Animated.View>
         </View>
         </ScrollView>
       </GlassCard>
@@ -577,15 +732,45 @@ const styles = StyleSheet.create({
     marginBottom: tokens.spacing.sm,
   },
   section: {
-    marginBottom: tokens.spacing.md,
+    marginBottom: tokens.spacing.sm,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: tokens.spacing.sm,
+    paddingHorizontal: tokens.spacing.xs,
+    marginBottom: tokens.spacing.xs,
+  },
+  sectionHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: tokens.spacing.sm,
+    flex: 1,
   },
   sectionLabel: {
     ...typography.label,
-    marginBottom: tokens.spacing.xs,
+    fontWeight: '600',
+  },
+  badge: {
+    paddingHorizontal: tokens.spacing.sm,
+    paddingVertical: tokens.spacing.xs,
+    borderRadius: tokens.radius.full,
+  },
+  badgeText: {
+    ...typography.caption,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  chevron: {
+    fontSize: 12,
+    color: '#888888',
+    marginLeft: tokens.spacing.xs,
   },
   priorityContainer: {
     flexDirection: 'row',
     gap: tokens.spacing.sm,
+    paddingTop: tokens.spacing.xs,
   },
   priorityButton: {
     flex: 1,
@@ -604,6 +789,7 @@ const styles = StyleSheet.create({
   dateContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingTop: tokens.spacing.xs,
   },
   dateButton: {
     flex: 1,
@@ -633,6 +819,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: tokens.spacing.sm,
+    paddingTop: tokens.spacing.xs,
   },
   tagInput: {
     flex: 1,
